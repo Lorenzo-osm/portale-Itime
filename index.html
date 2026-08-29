@@ -573,6 +573,7 @@ tbody tr:hover { background: rgba(0,212,255,0.03); }
   <button class="nav-btn" onclick="showPage('segnalazioni')" id="nav-segnalazioni">Segnalazioni</button>
   <button class="nav-btn" onclick="showPage('storico')" id="nav-storico">Storico</button>
   <button class="nav-btn" onclick="showPage('organigramma')" id="nav-organigramma">Organigramma</button>
+  <button class="nav-btn" onclick="esportaDati()" title="Esporta clienti e consulenti in JSON per il Wiki">&#8595; Esporta dati</button>
   <div class="edition-badge" id="navbar-edition">&mdash;</div>
   <div class="nav-user-badge" id="nav-user-badge" style="display:none;"></div>
   <button class="nav-btn-admin" id="nav-admin-btn" onclick="openAdminPanel()" style="display:none;">&#9881; Admin</button>
@@ -2661,6 +2662,97 @@ function _orgBuildLevel(nodes, parentId, isRoot) {
     avviaSessione();
   }
 })();
+
+// ===== ESPORTA DATI PER WIKI =====
+function buildExportPayload() {
+  const now = new Date();
+  const ts = now.toISOString().slice(0, 16).replace('T', ' ');
+
+  const consulenti = [];
+  (S.partners || []).forEach(function(p) {
+    (p.consulenti || []).forEach(function(c) {
+      consulenti.push({ nome: c.name, partner: p.name });
+    });
+  });
+
+  const clientiMap = {};
+  (S.iscritti || []).forEach(function(i) {
+    const key = (i.nome || '') + '|' + (i.cognome || '') + '|' + (i.azienda || '');
+    if (!clientiMap[key]) {
+      clientiMap[key] = {
+        nome: i.nome || '',
+        cognome: i.cognome || '',
+        azienda: i.azienda || '',
+        consulente: i.consulente || '',
+        partner: i.partner || '',
+        stato: 'fermo',
+        storico_mensile: []
+      };
+    }
+    clientiMap[key].storico_mensile.push({
+      edizione: i.editionId || '',
+      presenza: !!i.presenza,
+      programmazione: i.programmazione || ''
+    });
+    if (i.presenza) clientiMap[key].stato = 'attivo';
+  });
+
+  // Aggiungi debriefing dove disponibile (match per nome+cognome)
+  (S.debriefing || []).forEach(function(d) {
+    const nomeD = (d.nome || '').toLowerCase();
+    const cognomeD = (d.cognome || '').toLowerCase();
+    Object.keys(clientiMap).forEach(function(k) {
+      const parts = k.split('|');
+      if ((parts[0] || '').toLowerCase() === nomeD && (parts[1] || '').toLowerCase() === cognomeD) {
+        clientiMap[k].debriefing = {
+          settimane: d.settimane || [],
+          pmAssegnati: d.pmAssegnati || [],
+          isClientePM: !!d.isClientePM,
+          bloccato: !!d.bloccato
+        };
+      }
+    });
+  });
+
+  return {
+    progetto: 'I-Time',
+    edizione_corrente: S.edition,
+    esportato_il: ts,
+    consulenti: consulenti,
+    clienti: Object.values(clientiMap)
+  };
+}
+
+async function esportaDati() {
+  const json = JSON.stringify(buildExportPayload(), null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const filename = 'export-dati.json';
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      toast('Esportazione completata.');
+    } catch (e) {
+      if (e.name !== 'AbortError') _downloadFallback(blob, filename);
+    }
+  } else {
+    _downloadFallback(blob, filename);
+  }
+}
+
+function _downloadFallback(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+  toast('File scaricato — spostalo in FONTI/PORTALI/Sito I-Time/');
+}
 </script>
 </body>
 </html>
